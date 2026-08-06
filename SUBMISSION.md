@@ -188,6 +188,21 @@ goes through one escaping helper, with regression tests per injection vector.
 The generalisable version: a passing test for a mitigation says the mitigation
 works on the input you thought of. It says nothing about the inputs you did not.
 
+**Corrected: a green local suite that failed in CI.** After the dependency
+upgrade, everything passed locally and `npm ci` failed on the runner. The cause
+was environmental: I develop on Node 24 / npm 11, CI pins Node 20 / npm 10, and
+npm 11 had written a lockfile omitting `@emnapi/core` and `@emnapi/runtime` —
+optional platform packages that npm 10 requires. `npm audit fix` had quietly
+reintroduced a skew I had reverted by hand earlier in the session.
+
+I resolved it by reproducing the CI environment rather than guessing: downloaded
+Node 20, replayed the workflow step by step, got the same `EUSAGE` failure,
+regenerated the lockfile under npm 10, and verified the full pipeline under both
+Node 20 and Node 24. CI now runs a `[20, 22, 24]` matrix, because a single
+version is what let a local-only pass look like a green build. I also added
+`npm audit --audit-level=moderate` as a build step so advisories fail the build
+instead of waiting for someone to run it by hand.
+
 **Corrected: my own test contained the bug the product code was fixed for.**
 The CLI integration test resolved the script path with
 `new URL(...).pathname`, which percent-encodes. Checked out into a directory
@@ -216,11 +231,15 @@ name of safety. Changed to advertise the field and refuse it explicitly.
 ## Commands used to verify the result, with outcomes
 
 ```bash
+npm ci               # clean under npm 10 (Node 20) and npm 11 (Node 24)
 npm run typecheck    # clean
 npm test             # 66 passed (1 before)
 npm run build        # clean
 npm audit            # found 0 vulnerabilities (6 before)
 ```
+
+Run under both Node 20 and Node 24 locally, because the first CI run was red
+while my machine was green.
 
 Behavioural checks against a fixture repo with a space in its path, a rename, and
 an untracked file:

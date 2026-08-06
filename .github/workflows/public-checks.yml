@@ -17,13 +17,23 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      # 20 is the engines floor; 24 is what this was developed on. A lockfile
+      # written by npm 11 omitted optional packages that npm 10 requires, so
+      # `npm ci` passed locally and failed here. Testing one version hides that.
+      matrix:
+        node-version: ["20", "22", "24"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      # Fails the build on a known advisory rather than leaving it to whoever
+      # remembers to run it. The tree is currently clean.
+      - run: npm audit --audit-level=moderate
