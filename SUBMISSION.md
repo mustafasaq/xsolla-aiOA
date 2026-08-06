@@ -188,6 +188,15 @@ goes through one escaping helper, with regression tests per injection vector.
 The generalisable version: a passing test for a mitigation says the mitigation
 works on the input you thought of. It says nothing about the inputs you did not.
 
+**Corrected: my own test contained the bug the product code was fixed for.**
+The CLI integration test resolved the script path with
+`new URL(...).pathname`, which percent-encodes. Checked out into a directory
+containing a space it yields `/my%20project/src/cli.ts` and every test fails to
+spawn — the same "path with a space" defect I had just fixed in `--repo`, this
+time in the test guarding it. Verified both directions by cloning into
+`/tmp/space test/proj`: all six fail with `pathname`, all six pass with
+`fileURLToPath`.
+
 **Corrected: a bug in my own truncation code, caught by a test.** The first
 implementation passed `maxOutputBytes` as both the `exec` capture buffer and the
 report limit. Node kills the child the instant it hits `maxBuffer`, so the
@@ -229,6 +238,18 @@ an untracked file:
 | File named `evil\n## Injected Heading` | Wrote a real heading into the report | `` `evil\x0a## Injected Heading` `` inside inline code |
 | Untracked files | Mixed into the base..HEAD file list | Separate section; `--no-untracked` to omit |
 | `inspector --help` | — | Prints usage, exits 0 (was treated as an unknown command) |
+
+A green suite only proves the tests run, not that they would catch a
+regression, so I mutation-tested them: reintroduce each original defect in the
+source, confirm the suite goes red, restore. Fourteen mutations — disabling path
+escaping, rejecting on non-zero exit, restoring `.split(" ")[0]`, reporting
+every change as `modified`, dropping rename detection, widening the ref pattern,
+skipping the capability check, diffing from the base tip instead of the
+merge-base, and others — and all fourteen were killed. None survived, so no fix
+in this diff is guarded by a test that merely happens to pass.
+
+I also checked the suite from a directory containing a space, which is how I
+found the `pathname` bug in my own test described above.
 
 Over real JSON-RPC against the stdio server:
 

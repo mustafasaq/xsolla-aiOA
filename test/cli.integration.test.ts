@@ -1,13 +1,17 @@
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RepoFixture } from "./fixture.js";
 
 const run = promisify(execFile);
 
-const CLI = new URL("../src/cli.ts", import.meta.url).pathname;
+// fileURLToPath, not URL.pathname: pathname percent-encodes, so a checkout in
+// a directory containing a space would yield "/my%20project/src/cli.ts" and
+// fail to spawn. That is the same defect this suite tests the CLI for.
+const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
 type CliRun = { stdout: string; stderr: string; code: number };
 
