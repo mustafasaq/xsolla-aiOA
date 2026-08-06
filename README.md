@@ -1,41 +1,56 @@
 # Repository Inspector
 
-This is a small TypeScript developer tool that inspects changes in a Git
-repository, runs optional validation commands, and produces a Markdown report.
-It can be used from a command line or exposed to AI clients through MCP.
+A small TypeScript developer tool that inspects changes in a Git repository,
+runs optional validation commands, and produces a report. It is usable from the
+command line and from AI clients over MCP.
 
-## Your task
+## Interface decision: hybrid, with one shared contract
 
-Investigate the repository and improve it as you judge best. The starter works
-for a narrow happy path, but production use may expose correctness, safety,
-reliability, contract, output, documentation, or testing weaknesses.
+Both interfaces are supported, but they are not equals — they differ in
+**capability**, never in **behaviour**.
 
-You are not expected to finish everything. We care about how you investigate,
-prioritize, implement, verify, and explain a meaningful scope.
+Every adapter parses its input through the same Zod schema in
+[`src/contract.ts`](src/contract.ts) and calls the same core, which returns
+structured data rather than a formatted string. Rendering is a view over that
+data. This is a direct response to how the two adapters had drifted: the MCP
+tool advertised `repo_path` but read `repoPath`, so it silently reviewed the
+server's own directory, and `--format json` was parsed and threaded all the way
+into the core without ever being read. Neither is expressible now — the schema
+is the single definition of a request, and JSON and Markdown are two renderings
+of one result.
 
-## Product decision
+| | CLI | MCP |
+|---|---|---|
+| Primary user | A developer at a terminal | An AI coding agent |
+| Validation commands | Allowed | **Denied by default** |
+| Command timeout | 10 min | 2 min |
+| Max output | 1 MB | 64 KB |
+| Max files listed | 5000 | 500 |
 
-This tool may be used directly by developers and by AI coding agents. Decide
-whether its production interface should be **CLI-first**, **MCP-first**, or
-**hybrid**. Implement improvements consistent with your decision.
+### Trust boundary
 
-There is no preferred label. Explain:
+The asymmetry is the whole point. Typing `--validate "npm test"` into your own
+shell grants you nothing you did not already have, so the CLI runs commands
+freely. An MCP call arrives from a language model whose input may be influenced
+by repository contents, an issue tracker, or a web page it just read; handing
+that a shell is a remote code execution primitive. So MCP callers get a
+read-only review unless the operator sets `INSPECTOR_ALLOW_MCP_VALIDATION=1` on
+the server process — a decision made where the server is launched, not by the
+caller. Asking for commands without that opt-in returns an explicit refusal
+rather than a quietly reduced review.
 
-- The primary user and execution environment you assumed.
-- The trust boundary and allowed capabilities.
-- Reliability, discoverability, latency/context, and output-size tradeoffs.
-- How the interfaces you continue to advertise stay behaviorally consistent.
-- What evidence would change your decision.
+MCP's tighter output caps exist because its report is returned into a context
+window, not written to a file the reader can page through.
 
-## Time and rules
+### What would change this decision
 
-- Maximum **90 focused minutes** within 48 hours of receiving the invitation.
-- Use AI coding tools freely. Verify their work and document at least one
-  suggestion you corrected or rejected.
-- Work in your own repository created from this template.
-- Commit as you work and complete `SUBMISSION.md` in your final commit.
-- Completion is not required. Accurate scope and verification matter more than
-  a large diff.
+Evidence that agents mostly call this in throwaway sandboxes where RCE is
+uninteresting would justify enabling validation by default. Evidence that
+humans consume it mainly through an agent rather than a terminal would justify
+going MCP-first and demoting the CLI to a debug harness. Conversely, a single
+report of a model being talked into running a command via repository content
+would justify removing `INSPECTOR_ALLOW_MCP_VALIDATION` altogether and making
+the MCP surface permanently read-only.
 
 ## Setup
 
@@ -48,36 +63,67 @@ npm test
 ## CLI
 
 ```bash
-npm run inspector -- review --repo ./path/to/repo --format markdown
+npm run inspector -- review --repo ./path/to/repo
 npm run inspector -- review --repo ./path/to/repo --validate "npm test"
+npm run inspector -- review --repo ./path/to/repo --format json --stdout
 ```
 
-The report is written to `review-report.md`.
+| Option | Meaning |
+|---|---|
+| `--repo <path>` | Repository to inspect (required). |
+| `--base-ref <ref>` | Ref to compare against. Defaults to `main`, then `master`, then `HEAD~1`. |
+| `--validate <cmd>` | Command to run in the repository. Repeatable. |
+| `--format <fmt>` | `markdown` (default) or `json`. |
+| `--out <file>` | Output path. Defaults to `review-report.md`. |
+| `--stdout` | Write to stdout instead of a file. |
+
+Exit code is `0` when every validation passed and `1` when any failed or timed
+out, so CI can gate on a review. A failing validation is reported in full — it
+no longer aborts the run and discards the changed-file list with it.
 
 ## MCP
 
-Start the stdio server with:
-
 ```bash
-npm run mcp-server
+npm run mcp-server                                    # read-only
+INSPECTOR_ALLOW_MCP_VALIDATION=1 npm run mcp-server   # commands enabled
 ```
 
-It exposes a `review_repository` tool. Inspect the implementation to determine
-its current input contract and whether it is suitable for the production model
-you propose.
+Exposes one tool, `review_repository`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `repositoryPath` | string, required | The repository to inspect. |
+| `baseRef` | string, optional | Must match `^[A-Za-z0-9._/][A-Za-z0-9._/-]*$`. |
+| `validationCommands` | string[], optional | Refused unless the server opted in. |
+| `format` | `"markdown" \| "json"` | Defaults to Markdown. |
+
+Failures (missing path, unknown ref, denied capability) come back as
+`isError` tool results with an actionable message, not as protocol errors.
+
+### A note on `baseRef` validation
+
+The ref pattern is not cosmetic. The base ref used to be interpolated into
+`` `${base}...HEAD` ``, so a ref of `--output=/tmp/x` became the git flag
+`--output=/tmp/x...HEAD` and wrote the diff to a caller-chosen path. Refs are
+now pattern-checked, resolved to commit SHAs before reaching `git diff`, and
+passed after a `--` separator.
 
 ## Project layout
 
 ```text
-src/core.ts         shared review orchestration
+src/contract.ts     shared request schema and capability model
+src/core.ts         review orchestration, returns structured data
 src/cli.ts          command-line adapter
 src/mcp-server.ts   MCP adapter
 src/git.ts          Git inspection
 src/validation.ts   validation execution
-src/report.ts       Markdown report generation
-test/               public starter tests
+src/report.ts       Markdown and JSON rendering
+test/               tests, one per fixed defect
+tsconfig.build.json build config that emits src only, so bin resolves
 ```
 
-When finished, submit via **Security → Report a vulnerability** on this
-repo — see `SECURITY.md` for exactly what to include. Do not reply by email;
-that submission channel is not monitored.
+## Submission
+
+See `SUBMISSION.md`. Note that this file previously carried a submission
+instruction that conflicted with the one candidates receive by email; that
+discrepancy is documented in `SUBMISSION.md` rather than acted on unilaterally.
