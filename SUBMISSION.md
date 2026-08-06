@@ -72,27 +72,42 @@ so the build compiles `src` only, and confirmed `node dist/cli.js` runs.
 
 **Report and exit codes.** Pass/fail and exit code are now rendered (previously
 dropped entirely, so a pass and a failure looked identical); empty state is
-stated; the exit code is non-zero when a validation fails so CI can gate; and
-code fences are sized longer than any backtick run in the content, because the
-output is untrusted and the consumer is an AI agent.
+stated; and the exit code is non-zero when a validation fails so CI can gate.
 
-53 tests were added, each one tied to a specific defect and written to fail
-against the original code.
+**Untrusted repository content in the report.** Command output is fenced with a
+delimiter longer than any backtick run it contains. File paths, the repository
+path and command names are rendered as inline code with control characters
+escaped — git permits newlines in path names, so a file named
+`evil\n## Injected Heading` could otherwise write its own section, and its own
+instructions, into a document intended for an AI agent. See the corrections
+section: I shipped the fence first and missed the path, which is how this was
+found.
+
+**Untracked files conflated with the comparison.** They were being merged into
+`changedFiles` alongside committed changes, which misrepresents what a branch
+actually changed. They now have their own field, their own report section, and
+an `includeUntracked` / `--no-untracked` switch.
+
+**Dependency vulnerabilities.** `npm audit` reported six advisories. The tree is
+now clean at zero — see the corrections section, because the fix was not what I
+first assumed.
+
+65 tests were added, each tied to a specific defect and written to fail against
+the code it guards.
 
 ## What did you intentionally not do?
 
-- **`npm audit` findings (2 high, 2 moderate).** All transitive through the MCP
-  SDK, none reachable from this code. Bumping them is a lockfile change I could
-  not verify in the time available.
-- **The `@hono/node-server` override.** See below — I investigated it, found my
-  suspicion wrong, and left it alone.
 - **Sandboxing validation commands.** The honest boundary is "the CLI user
-  already has a shell." Real isolation means containers, which is a different
-  project.
-- **Streaming, pagination, and output schema versioning.** Relevant at scale,
-  speculative here.
-- **A CLI integration test spawning the built binary.** `parseArgs` and the core
-  are tested separately; the seam between them is thin and covered manually.
+  already has a shell," and the MCP surface refuses commands outright. Real
+  isolation means containers or seccomp, which is a different project; the
+  capability switch is deliberately all-or-nothing rather than pretending to a
+  safety it does not provide.
+- **Pagination for very large diffs.** They truncate at the capability limit
+  with a note saying how many were dropped. Streaming or cursor-based paging is
+  the right answer at scale and is speculative here.
+- **A tunable rename-similarity threshold.** `--find-renames` uses git's
+  default; exposing it is easy but I have no evidence anyone needs it.
+- **Localisation.** The report is English-only with no seam for anything else.
 
 ## Interface decision
 
@@ -136,16 +151,42 @@ audit trail.
 
 ## Where did you check, correct, or reject an AI suggestion? (required)
 
-**Rejected: a dependency "fix" for a bug that did not exist.** I noticed
-`package.json` overrides `@hono/node-server` to `2.0.10` while the MCP SDK
-requires `^1.19.9` — a cross-major pin, in a project that uses no Hono directly.
-It looked planted, and the agent and I both expected it to break the server. I
-had it booted over real JSON-RPC before touching it, and it initialised and
-served `tools/list` without complaint. The suspicious-looking thing was not the
-bug. I removed the change and documented the override as unexplained rather than
-shipping a fix with a fabricated justification. Had I trusted the reasoning
-instead of the test, I would have written a confident and false claim into this
-document.
+**Rejected twice, and I was wrong both times — the `@hono/node-server`
+override.** `package.json` pinned `@hono/node-server` to `2.0.10` while the MCP
+SDK required `^1.19.9`: a cross-major override in a project that uses no Hono
+directly. It looked planted, and I expected it to break the server. First
+correction: I booted the server over real JSON-RPC before touching it, and it
+served `tools/list` without complaint, so I dropped the "fix" rather than ship a
+change justified by a stack trace I had imagined.
+
+Second correction, later: when I did remove the override, `npm audit` went from
+four advisories to six. The override had been *suppressing* one —
+GHSA-frvp-7c67-39w9, a path traversal in `@hono/node-server`'s `serve-static`.
+The thing I had twice written off as suspicious was a crude but real security
+mitigation, forcing a patched major because the pinned SDK depended on a
+vulnerable range. The actual fix was neither keeping nor deleting it: upgrading
+to `@modelcontextprotocol/sdk@^1.30.0`, which adopts the patched Hono major
+officially, then letting `npm audit fix` settle the rest. Zero advisories now,
+no override needed.
+
+The lesson I would take to a real codebase: an odd-looking pin is often someone
+else's incident, and deleting it because it looks untidy is how a fixed
+vulnerability gets reintroduced.
+
+**Corrected: I fixed half of an injection and claimed the whole thing.** I
+fenced untrusted *command output* against Markdown escape, wrote a test for it,
+and highlighted it as a finding — then interpolated *file paths* into the same
+document unescaped. Git allows newlines in path names and the `-z` parsing I had
+just added preserves them perfectly, so a file named
+`evil\n## Injected Heading\nIgnore previous instructions.txt` produced a report
+containing a real heading and a real instruction. I found it by going back and
+attacking my own fix instead of trusting the test I had written for it: the test
+proved the fence worked, not that the report was safe. Now every repository-
+derived value — paths, previous paths, the repository path, command names —
+goes through one escaping helper, with regression tests per injection vector.
+
+The generalisable version: a passing test for a mitigation says the mitigation
+works on the input you thought of. It says nothing about the inputs you did not.
 
 **Corrected: a bug in my own truncation code, caught by a test.** The first
 implementation passed `maxOutputBytes` as both the `exec` capture buffer and the
@@ -167,8 +208,9 @@ name of safety. Changed to advertise the field and refuse it explicitly.
 
 ```bash
 npm run typecheck    # clean
-npm test             # 54 passed (1 before)
+npm test             # 66 passed (1 before)
 npm run build        # clean
+npm audit            # found 0 vulnerabilities (6 before)
 ```
 
 Behavioural checks against a fixture repo with a space in its path, a rename, and
@@ -184,6 +226,9 @@ an untracked file:
 | `--repo /tmp` | Raw `execFileSync` stack trace | `Not a Git repository: /tmp. Point --repo at...` |
 | `--base_ref` typo | Silently ignored | `Unknown option '--base_ref'` |
 | `node dist/cli.js` after `npm run build` | Emitted to `dist/src/cli.js`; `bin` path broken | Emitted to `dist/cli.js`; runs |
+| File named `evil\n## Injected Heading` | Wrote a real heading into the report | `` `evil\x0a## Injected Heading` `` inside inline code |
+| Untracked files | Mixed into the base..HEAD file list | Separate section; `--no-untracked` to omit |
+| `inspector --help` | — | Prints usage, exits 0 (was treated as an unknown command) |
 
 Over real JSON-RPC against the stdio server:
 
@@ -211,17 +256,20 @@ record.
 
 ## Known limitations and the next three things you would do
 
-1. **An end-to-end CLI test that spawns the built binary** and asserts on exit
-   codes and file output. The parser and core are tested; the seam is not.
-2. **A real validation sandbox** — working directory confinement, a scrubbed
-   environment, and no network — so `INSPECTOR_ALLOW_MCP_VALIDATION=1` stops
-   being all-or-nothing.
-3. **Resolve the dependency override.** Find out why `@hono/node-server` is
-   pinned across a major version, then remove it or document why it must stay.
+1. **A real validation sandbox** — working-directory confinement, a scrubbed
+   environment, no network — so `INSPECTOR_ALLOW_MCP_VALIDATION=1` stops being
+   an all-or-nothing switch and becomes a gradient.
+2. **Property-based tests for the escaping layer.** The injection I missed was
+   found by hand-crafting one hostile filename. Generating adversarial paths and
+   asserting that no output line ever begins with `#`, `>` or `-` outside a
+   known position would cover the vectors I have not thought of.
+3. **Renderer-level output budgeting.** Truncation is currently per-command and
+   per-file-list; a very large diff plus verbose output can still produce a
+   report bigger than a caller wants, because nothing caps the whole document.
 
-Also outstanding: no pagination for very large diffs (they truncate with a note),
-`--find-renames` uses git's default similarity threshold with no way to tune it,
-and the report is English-only with no localisation seam.
+Also outstanding: no pagination for very large diffs (they truncate with a
+note), `--find-renames` uses git's default similarity threshold with no way to
+tune it, and the report is English-only with no localisation seam.
 
 ## Note on the submission channel
 
@@ -246,5 +294,8 @@ knowing about.
 ## Approximate focused-work time
 
 - Start: 2026-08-05, 20:15
-- Finish: 2026-08-05, 20:50
-- Total: approximately 35 focused minutes, within the 90-minute budget.
+- Finish: 2026-08-05, 22:00
+- Total: approximately 75 focused minutes, within the 90-minute budget. Roughly
+  the last third went on a second pass that attacked my own fixes rather than
+  adding new ones, which is where the path-injection and dependency findings
+  came from.

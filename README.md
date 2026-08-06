@@ -76,6 +76,7 @@ npm run inspector -- review --repo ./path/to/repo --format json --stdout
 | `--format <fmt>` | `markdown` (default) or `json`. |
 | `--out <file>` | Output path. Defaults to `review-report.md`. |
 | `--stdout` | Write to stdout instead of a file. |
+| `--no-untracked` | Omit working-tree files git is not tracking. |
 
 Exit code is `0` when every validation passed and `1` when any failed or timed
 out, so CI can gate on a review. A failing validation is reported in full — it
@@ -95,10 +96,25 @@ Exposes one tool, `review_repository`:
 | `repositoryPath` | string, required | The repository to inspect. |
 | `baseRef` | string, optional | Must match `^[A-Za-z0-9._/][A-Za-z0-9._/-]*$`. |
 | `validationCommands` | string[], optional | Refused unless the server opted in. |
+| `includeUntracked` | boolean | Defaults to true. |
 | `format` | `"markdown" \| "json"` | Defaults to Markdown. |
 
 Failures (missing path, unknown ref, denied capability) come back as
 `isError` tool results with an actionable message, not as protocol errors.
+
+### Untrusted content in the report
+
+The report is designed to be read by an AI agent, so every value that comes
+from the repository is treated as hostile. Command output is wrapped in a fence
+sized longer than any backtick run it contains, and file paths, the repository
+path and command names are rendered as inline code with control characters
+escaped. Git permits newlines in path names, so a file called
+`evil\n## Injected Heading` would otherwise write its own section — and its own
+instructions — into the document.
+
+Untracked files are listed in a separate section, because they are working-tree
+state rather than part of the base..HEAD comparison, and merging the two
+misrepresents what a branch actually changed.
 
 ### A note on `baseRef` validation
 
