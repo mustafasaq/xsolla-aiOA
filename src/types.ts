@@ -38,8 +38,15 @@ export type ReviewResult = {
   baseRef: string;
   baseCommit: string;
   headCommit: string;
+  /** Files that differ between the base commit and HEAD. */
   changedFiles: ChangedFile[];
   changedFilesTruncated: boolean;
+  /**
+   * Working-tree files git is not tracking. Kept separate from `changedFiles`
+   * because they are not part of the base..HEAD comparison, and conflating the
+   * two misrepresents what a branch actually changed.
+   */
+  untrackedFiles: ChangedFile[];
   validationResults: ValidationResult[];
   /** Human-readable remarks about how the review was resolved. */
   notes: string[];

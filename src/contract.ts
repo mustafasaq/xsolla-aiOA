@@ -37,6 +37,12 @@ export const ReviewRequestShape = {
     .array(z.string().min(1))
     .default([])
     .describe("Shell commands to run inside the repository, e.g. 'npm test'."),
+  includeUntracked: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Report working-tree files git is not tracking, in their own section.",
+    ),
   format: z
     .enum(["markdown", "json"])
     .default("markdown")

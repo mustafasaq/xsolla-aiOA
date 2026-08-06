@@ -32,17 +32,24 @@ export async function reviewRepository(
   const comparison = resolveComparison(repositoryPath, request.baseRef);
   const notes = [...comparison.notes];
 
-  const tracked = changedFiles(
+  const files = changedFiles(
     repositoryPath,
     comparison.baseCommit,
     comparison.headCommit,
   );
-  const files = [...tracked, ...untrackedFiles(repositoryPath)];
+  const untracked = request.includeUntracked
+    ? untrackedFiles(repositoryPath)
+    : [];
 
   const changedFilesTruncated = files.length > capabilities.maxChangedFiles;
   if (changedFilesTruncated) {
     notes.push(
       `Listing the first ${capabilities.maxChangedFiles} of ${files.length} changed files.`,
+    );
+  }
+  if (untracked.length > capabilities.maxChangedFiles) {
+    notes.push(
+      `Listing the first ${capabilities.maxChangedFiles} of ${untracked.length} untracked files.`,
     );
   }
 
@@ -59,6 +66,7 @@ export async function reviewRepository(
     headCommit: comparison.headCommit,
     changedFiles: files.slice(0, capabilities.maxChangedFiles),
     changedFilesTruncated,
+    untrackedFiles: untracked.slice(0, capabilities.maxChangedFiles),
     validationResults,
     notes,
   };

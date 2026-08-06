@@ -13,6 +13,7 @@ describe("review request contract", () => {
     expect(request).toEqual({
       repositoryPath: "/tmp/repo",
       validationCommands: [],
+      includeUntracked: true,
       format: "markdown",
     });
   });

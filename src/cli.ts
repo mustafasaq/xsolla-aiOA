@@ -15,6 +15,7 @@ Options:
   --format <fmt>       markdown (default) or json.
   --out <file>         Where to write the report. Defaults to ${DEFAULT_OUTPUT}.
   --stdout             Write the report to stdout instead of a file.
+  --no-untracked       Omit working-tree files that git is not tracking.
   -h, --help           Show this message.
 
 Exit codes:
@@ -29,6 +30,7 @@ type Args = {
   validations: string[];
   outputPath: string;
   toStdout: boolean;
+  includeUntracked: boolean;
   help: boolean;
 };
 
@@ -44,16 +46,22 @@ function valueFor(argv: string[], index: number, flag: string): string {
 }
 
 export function parseArgs(argv: string[]): Args {
+  // A leading flag means no subcommand was given, so `inspector --help` is not
+  // mistaken for a command named "--help".
+  const first = argv[0] ?? "";
+  const leadsWithFlag = first.startsWith("-");
+
   const args: Args = {
-    command: argv[0] ?? "",
+    command: leadsWithFlag ? "" : first,
     format: "markdown",
     validations: [],
     outputPath: DEFAULT_OUTPUT,
     toStdout: false,
+    includeUntracked: true,
     help: false,
   };
 
-  for (let index = 1; index < argv.length; index++) {
+  for (let index = leadsWithFlag ? 0 : 1; index < argv.length; index++) {
     const token = argv[index];
     switch (token) {
       case "--repo":
@@ -82,6 +90,9 @@ export function parseArgs(argv: string[]): Args {
         break;
       case "--stdout":
         args.toStdout = true;
+        break;
+      case "--no-untracked":
+        args.includeUntracked = false;
         break;
       case "-h":
       case "--help":
@@ -123,6 +134,7 @@ async function main(): Promise<number> {
       repositoryPath: args.repositoryPath,
       baseRef: args.baseRef,
       validationCommands: args.validations,
+      includeUntracked: args.includeUntracked,
       format: args.format,
     },
     CLI_CAPABILITIES,
